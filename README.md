@@ -8,7 +8,10 @@ on it:
 - Zed with the project (`zed -n <path>`)
 - a new Firefox window
 
-Then it exits. Zed and Firefox are started detached, so closing the terminal doesn't close them.
+It then waits (up to 15 s) for each app's new window, moves it to the new desktop in case it opened
+elsewhere, and resizes it to a zone: Zed to the right two thirds, Firefox to the bottom of the left
+third. The zones are hardcoded to match my FancyZones layout. Zed and Firefox are started
+detached, so closing the terminal doesn't close them.
 
 ## Requirements
 
