@@ -70,8 +70,10 @@ struct Snapshot {
 
 struct SeenWindow {
     hwnd: HWND,
-    /// Kept to notice if the handle has been reused by a different window since.
+    /// Class and owning process, kept to notice if the window has closed and Windows has given its
+    /// handle to a different window since.
     class: String,
+    process_id: u32,
     desktop: GUID,
 }
 
@@ -90,6 +92,7 @@ impl Snapshot {
                 Some(SeenWindow {
                     hwnd,
                     class: window::class_name(hwnd),
+                    process_id: window::process_id(hwnd),
                     desktop,
                 })
             })
@@ -131,7 +134,9 @@ fn handle(seen: &Snapshot, destroyed: GUID, fallback: GUID, close: bool) {
 /// Why a window last seen on the closed desktop should be left open, if it should. Any doubt
 /// means leave it open.
 fn skip_reason(w: &SeenWindow, fallback: GUID) -> Option<&'static str> {
-    if !window::is_main_window(w.hwnd) || window::class_name(w.hwnd) != w.class {
+    let same_window =
+        window::class_name(w.hwnd) == w.class && window::process_id(w.hwnd) == w.process_id;
+    if !window::is_main_window(w.hwnd) || !same_window {
         return Some("skip (gone, or no longer the same window)");
     }
     // Some apps handle being closed from under their own modal dialog badly.

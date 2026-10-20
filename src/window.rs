@@ -16,8 +16,8 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, IsWindowVisible, IsZoomed, PostMessageW, SW_RESTORE, SWP_NOACTIVATE,
-    SWP_NOZORDER, SetWindowPos, ShowWindow, WM_CLOSE, WS_EX_TOOLWINDOW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, IsZoomed, PostMessageW, SW_RESTORE,
+    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow, WM_CLOSE, WS_EX_TOOLWINDOW,
 };
 
 use crate::fancyzones::Zone;
@@ -82,6 +82,13 @@ pub fn is_enabled(hwnd: HWND) -> bool {
 /// refuse. Posted rather than sent, so a hung or prompting app doesn't block us.
 pub fn close(hwnd: HWND) -> Result<()> {
     unsafe { PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)) }.context("PostMessageW")
+}
+
+/// ID of the process that owns `hwnd`, or 0 if the window no longer exists.
+pub fn process_id(hwnd: HWND) -> u32 {
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    pid
 }
 
 pub fn class_name(hwnd: HWND) -> String {
