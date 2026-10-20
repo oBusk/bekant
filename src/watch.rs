@@ -1,6 +1,6 @@
-//! `bekant watch`: when a virtual desktop is closed, find the windows that were on it.
+//! `bekant watch`: when a virtual desktop is closed, close the windows that were on it.
 //!
-//! Dry run for now: it only prints which windows it would close.
+//! Without `--close` it's a dry run that only prints which windows it would close.
 //!
 //! Windows moves a closed desktop's windows to a fallback desktop before telling us, so by the
 //! time we hear about it they're mixed in with the fallback's own windows. We therefore keep a
@@ -21,13 +21,18 @@ use crate::window;
 /// this long before its desktop is closed may be missed, which leaves it open.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
-pub fn run() -> Result<()> {
+/// Watch until stopped. With `close` false, only print what would be closed.
+pub fn run(close: bool) -> Result<()> {
     let (tx, rx) = channel::<DesktopEvent>();
     // Dropping this stops the listener.
     let _listener =
         winvd::listen_desktop_events(tx).map_err(|e| anyhow!("listen_desktop_events: {e:?}"))?;
 
-    println!("watching for closed desktops (dry run: nothing is closed). Ctrl+C to stop.");
+    if close {
+        println!("watching for closed desktops; their windows will be closed. Ctrl+C to stop.");
+    } else {
+        println!("watching for closed desktops (dry run: nothing is closed). Ctrl+C to stop.");
+    }
     let mut seen = Snapshot::take()?;
     let mut taken = Instant::now();
     loop {
@@ -39,7 +44,7 @@ pub fn run() -> Result<()> {
                 // Event desktops carry their GUID, so this works although the desktop is gone.
                 let ids = destroyed.get_id().and_then(|d| Ok((d, fallback.get_id()?)));
                 match ids {
-                    Ok((destroyed, fallback)) => report(&seen, destroyed, fallback),
+                    Ok((destroyed, fallback)) => handle(&seen, destroyed, fallback, close),
                     Err(e) => eprintln!("desktop closed, but can't identify it: {e:?}"),
                 }
             }
@@ -96,7 +101,8 @@ impl Snapshot {
     }
 }
 
-fn report(seen: &Snapshot, destroyed: GUID, fallback: GUID) {
+/// Close (or with `close` false, just list) the windows last seen on the `destroyed` desktop.
+fn handle(seen: &Snapshot, destroyed: GUID, fallback: GUID, close: bool) {
     let name = match seen.desktop_names.get(&destroyed) {
         Some(name) if !name.is_empty() => name.as_str(),
         Some(_) => "(unnamed)",
@@ -106,12 +112,16 @@ fn report(seen: &Snapshot, destroyed: GUID, fallback: GUID) {
     let mut any = false;
     for w in seen.windows.iter().filter(|w| w.desktop == destroyed) {
         any = true;
-        let verdict = skip_reason(w, fallback).unwrap_or("would close");
-        println!(
-            "  {verdict}: {} [{}]",
-            window::title(w.hwnd),
-            window::class_name(w.hwnd)
-        );
+        let label = format!("{} [{}]", window::title(w.hwnd), window::class_name(w.hwnd));
+        match skip_reason(w, fallback) {
+            Some(reason) => println!("  {reason}: {label}"),
+            None if !close => println!("  would close: {label}"),
+            None => match window::close(w.hwnd) {
+                // The app may still ask about unsaved work, so this isn't "closed".
+                Ok(()) => println!("  asked to close: {label}"),
+                Err(e) => println!("  couldn't ask to close: {label}: {e:#}"),
+            },
+        }
     }
     if !any {
         println!("  no windows were recorded on it");

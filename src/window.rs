@@ -1,7 +1,7 @@
 //! Finding and placing top-level windows. All the raw Win32 window calls live here.
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWM_CLOAKED_APP, DWM_CLOAKED_INHERITED, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
     DwmGetWindowAttribute,
@@ -15,8 +15,8 @@ use windows::Win32::UI::HiDpi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowTextW, IsWindowVisible, IsZoomed, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER,
-    SetWindowPos, ShowWindow, WS_EX_TOOLWINDOW,
+    GetWindowTextW, IsWindowVisible, IsZoomed, PostMessageW, SW_RESTORE, SWP_NOACTIVATE,
+    SWP_NOZORDER, SetWindowPos, ShowWindow, WM_CLOSE, WS_EX_TOOLWINDOW,
 };
 
 use crate::fancyzones::Zone;
@@ -69,6 +69,12 @@ pub fn is_main_window(hwnd: HWND) -> bool {
         && cloak_known
         && cloaked & (DWM_CLOAKED_APP | DWM_CLOAKED_INHERITED) == 0
         && !title(hwnd).is_empty()
+}
+
+/// Ask `hwnd` to close, like clicking its × button. The app may still ask about unsaved work, or
+/// refuse. Posted rather than sent, so a hung or prompting app doesn't block us.
+pub fn close(hwnd: HWND) -> Result<()> {
+    unsafe { PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)) }.context("PostMessageW")
 }
 
 pub fn class_name(hwnd: HWND) -> String {

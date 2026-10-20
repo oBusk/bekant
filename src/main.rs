@@ -52,13 +52,13 @@ const FIREFOX: App = App {
 };
 
 fn main() -> Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let (Some(arg), None) = (args.next(), args.next()) else {
-        bail!("usage: bekant <path> | bekant watch");
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let arg = match args.as_slice() {
+        [cmd] if cmd == "watch" => return watch::run(false),
+        [cmd, flag] if cmd == "watch" && flag == "--close" => return watch::run(true),
+        [path] => path,
+        _ => bail!("usage: bekant <path> | bekant watch [--close]"),
     };
-    if arg == "watch" {
-        return watch::run();
-    }
 
     let dir = resolve_dir(Path::new(&arg))?;
     let name = dir
