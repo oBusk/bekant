@@ -4,11 +4,15 @@
 //! bekant's desktop is always new, so only the default layout is read. Only custom grid layouts
 //! without spacing are supported.
 
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::UI::Shell::{FOLDERID_LocalAppData, KF_FLAG_DEFAULT, SHGetKnownFolderPath};
 
 /// A rectangle in 1/10000ths of the monitor's work area, the same units FancyZones uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,8 +180,17 @@ fn edges(sizes: &[i32]) -> Vec<i32> {
         .collect()
 }
 
+/// FancyZones' settings folder, found the same way PowerToys does: the LocalAppData known folder
+/// (not the LOCALAPPDATA environment variable) plus `Microsoft\PowerToys`. It doesn't depend on
+/// where PowerToys is installed.
 fn fancyzones_dir() -> Result<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA").context("LOCALAPPDATA is not set")?;
+    let local = unsafe {
+        let path = SHGetKnownFolderPath(&FOLDERID_LocalAppData, KF_FLAG_DEFAULT, None)
+            .context("cannot find the LocalAppData folder")?;
+        let local = OsString::from_wide(path.as_wide());
+        CoTaskMemFree(Some(path.0 as *const _));
+        local
+    };
     Ok(Path::new(&local).join(r"Microsoft\PowerToys\FancyZones"))
 }
 
