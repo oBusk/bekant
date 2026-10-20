@@ -1,0 +1,16 @@
+[package]
+name = "bekant"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+opt-level = "z"     # optimize for size; speed doesn't matter for this app
+lto = true          # link-time optimization across crates
+codegen-units = 1   # better optimization, slower build
+panic = "abort"     # no stack-unwinding machinery
+strip = true        # remove symbols from the exe
+
+[dependencies]
+anyhow = "1.0.104"
+winvd = "0.0.49"
