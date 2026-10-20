@@ -9,9 +9,10 @@ on it:
 - a new Firefox window
 
 It then waits (up to 15 s) for each app's new window, moves it to the new desktop in case it opened
-elsewhere, and resizes it to a zone: Zed to the right two thirds, Firefox to the bottom of the left
-third. The zones are hardcoded to match my FancyZones layout. Zed and Firefox are started
-detached, so closing the terminal doesn't close them.
+elsewhere, and resizes it to cover FancyZones zones: Zed zones 3-6, Firefox zone 2. Zone
+rectangles come from FancyZones' default layout for the primary monitor's orientation (what a new
+desktop gets); only custom grid layouts without spacing are supported. Zed and Firefox are
+started detached, so closing the terminal doesn't close them.
 
 ## Requirements
 
@@ -19,6 +20,7 @@ detached, so closing the terminal doesn't close them.
   [`winvd`](https://crates.io/crates/winvd), which drives the undocumented virtual desktop COM API)
 - `zed` on `PATH`
 - Firefox at `C:\Program Files\Mozilla Firefox\firefox.exe`
+- PowerToys FancyZones with a custom grid layout set as the default layout
 
 ## Build
 

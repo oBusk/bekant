@@ -1,5 +1,7 @@
 //! bekant: create a named virtual desktop for a project folder, switch to it, open Zed and
-//! Firefox there, and place their windows.
+//! Firefox there, and place their windows in FancyZones zones.
+
+mod fancyzones;
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -8,10 +10,11 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
+    MonitorFromPoint, MonitorFromWindow,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
@@ -49,33 +52,23 @@ struct App {
     name: &'static str,
     /// Window class of the app's top-level windows, used to recognise its new window.
     class: &'static str,
-    zone: Zone,
+    /// FancyZones zones the window should cover, numbered from 1 as FancyZones shows them.
+    zones: &'static [usize],
 }
 
-// Zones are hardcoded to match the "oBusk Standard" FancyZones layout: 3 columns (37.61% /
-// 31.19% / 31.20%) by 2 rows. Zone numbers are as shown in FancyZones (1-based; its JSON files
-// use 0-based indices).
+// Zone numbers assume the "oBusk Standard" layout: 3 columns by 2 rows, numbered down each
+// column.
 const ZED: App = App {
     name: "zed",
     class: "Zed::Window",
-    // Zones 3-6: the right two columns.
-    zone: Zone {
-        left: 3761,
-        top: 0,
-        right: 10000,
-        bottom: 10000,
-    },
+    // The right two columns.
+    zones: &[3, 4, 5, 6],
 };
 const FIREFOX: App = App {
     name: "Firefox",
     class: "MozillaWindowClass",
-    // Zone 2: bottom of the left column.
-    zone: Zone {
-        left: 0,
-        top: 5000,
-        right: 3761,
-        bottom: 10000,
-    },
+    // Bottom of the left column.
+    zones: &[2],
 };
 
 fn main() -> Result<()> {
@@ -100,6 +93,18 @@ fn main() -> Result<()> {
     unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) }
         .context("SetProcessDpiAwarenessContext")?;
 
+    // Read zones before touching desktops, so a layout problem doesn't leave an empty desktop.
+    // Assumes the windows open on a monitor with the primary monitor's orientation.
+    let layout = fancyzones::Layout::load_default(primary_monitor_is_horizontal()?)?;
+    let mut zed = Command::new("zed");
+    zed.arg("-n").arg(&dir);
+    let mut firefox = Command::new(FIREFOX_EXE);
+    firefox.arg("-new-window");
+    let apps = [
+        (ZED, layout.zone(ZED.zones)?, zed),
+        (FIREFOX, layout.zone(FIREFOX.zones)?, firefox),
+    ];
+
     // Zed and Firefox hand new-window requests to an already running instance, so the process
     // we spawn usually doesn't own the window. Instead, remember which windows exist now and
     // treat a new one with the right class as the app's.
@@ -121,18 +126,11 @@ fn main() -> Result<()> {
         return Err(e);
     }
 
-    let launches = [
-        (ZED, spawn_detached(Command::new("zed").arg("-n").arg(&dir))),
-        (
-            FIREFOX,
-            spawn_detached(Command::new(FIREFOX_EXE).arg("-new-window")),
-        ),
-    ];
     let mut errors = Vec::new();
     let mut waiting = Vec::new();
-    for (app, result) in launches {
-        match result {
-            Ok(()) => waiting.push(app),
+    for (app, zone, mut command) in apps {
+        match spawn_detached(&mut command) {
+            Ok(()) => waiting.push((app, zone)),
             Err(e) => errors.push(e.context(format!("failed to launch {}", app.name))),
         }
     }
@@ -146,26 +144,26 @@ fn main() -> Result<()> {
         sleep(POLL_INTERVAL);
         let windows = top_level_windows();
         let mut still_waiting = Vec::new();
-        for app in waiting {
+        for (app, zone) in waiting {
             let new_window = windows
                 .iter()
                 .copied()
                 .find(|w| !existing.contains(w) && is_app_window(*w, app.class));
             let Some(hwnd) = new_window else {
-                still_waiting.push(app);
+                still_waiting.push((app, zone));
                 continue;
             };
             let placed = winvd::move_window_to_desktop(desktop, &hwnd)
                 .map_err(|e| anyhow!("move_window_to_desktop: {e:?}"))
-                .and_then(|()| move_to_zone(hwnd, &app.zone));
+                .and_then(|()| move_to_zone(hwnd, &zone));
             match placed {
-                Ok(()) => found.push((app, hwnd)),
+                Ok(()) => found.push((app, zone, hwnd)),
                 Err(e) => errors.push(e.context(format!("failed to place {}", app.name))),
             }
         }
         waiting = still_waiting;
     }
-    for app in waiting {
+    for (app, _) in waiting {
         errors.push(anyhow!(
             "no {} window appeared within {}s",
             app.name,
@@ -175,8 +173,8 @@ fn main() -> Result<()> {
 
     if !found.is_empty() {
         sleep(SETTLE);
-        for (app, hwnd) in found {
-            if let Err(e) = move_to_zone(hwnd, &app.zone) {
+        for (app, zone, hwnd) in found {
+            if let Err(e) = move_to_zone(hwnd, &zone) {
                 errors.push(e.context(format!("failed to place {}", app.name)));
             }
         }
@@ -233,6 +231,21 @@ fn is_app_window(hwnd: HWND, class: &str) -> bool {
     let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
     let owned = unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok();
     visible && !owned && String::from_utf16_lossy(&buf[..len]) == class
+}
+
+/// Whether the primary monitor is wider than it is tall. FancyZones picks a new desktop's default
+/// layout by this.
+fn primary_monitor_is_horizontal() -> Result<bool> {
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    let monitor = unsafe { MonitorFromPoint(POINT::default(), MONITOR_DEFAULTTOPRIMARY) };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        bail!("GetMonitorInfoW failed");
+    }
+    let r = info.rcMonitor;
+    Ok(r.right - r.left >= r.bottom - r.top)
 }
 
 /// Resize `hwnd` to fill `zone` on the monitor it's on.
