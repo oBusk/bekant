@@ -13,6 +13,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect,
     GetWindowTextW, IsWindowVisible, IsZoomed, PostMessageW, SW_RESTORE, SWP_NOACTIVATE,
@@ -69,6 +70,12 @@ pub fn is_main_window(hwnd: HWND) -> bool {
         && cloak_known
         && cloaked & (DWM_CLOAKED_APP | DWM_CLOAKED_INHERITED) == 0
         && !title(hwnd).is_empty()
+}
+
+/// Whether `hwnd` accepts input. A main window is disabled while it has a modal dialog open
+/// (Save As, Options, ...), and then clicking its × button does nothing.
+pub fn is_enabled(hwnd: HWND) -> bool {
+    unsafe { IsWindowEnabled(hwnd) }.as_bool()
 }
 
 /// Ask `hwnd` to close, like clicking its × button. The app may still ask about unsaved work, or

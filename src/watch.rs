@@ -134,6 +134,10 @@ fn skip_reason(w: &SeenWindow, fallback: GUID) -> Option<&'static str> {
     if !window::is_main_window(w.hwnd) || window::class_name(w.hwnd) != w.class {
         return Some("skip (gone, or no longer the same window)");
     }
+    // Some apps handle being closed from under their own modal dialog badly.
+    if !window::is_enabled(w.hwnd) {
+        return Some("skip (has a dialog open)");
+    }
     let pinned = winvd::is_pinned_window(w.hwnd).unwrap_or(true)
         || winvd::is_pinned_app(w.hwnd).unwrap_or(true);
     if pinned {
