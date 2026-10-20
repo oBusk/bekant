@@ -27,20 +27,45 @@ fn main() -> Result<()> {
         .to_string_lossy()
         .into_owned();
 
+    // Check before touching desktops, so a missing Firefox doesn't strand us on an empty one.
+    if !Path::new(FIREFOX).is_file() {
+        bail!("Firefox not found at {FIREFOX}");
+    }
+
     // winvd::Error doesn't implement std::error::Error, so format it via Debug.
+    let previous =
+        winvd::get_current_desktop().map_err(|e| anyhow!("get_current_desktop: {e:?}"))?;
     let desktop = winvd::create_desktop().map_err(|e| anyhow!("create_desktop: {e:?}"))?;
-    desktop
-        .set_name(&name)
-        .map_err(|e| anyhow!("set_name: {e:?}"))?;
-    winvd::switch_desktop(desktop).map_err(|e| anyhow!("switch_desktop: {e:?}"))?;
+    let setup = || -> Result<()> {
+        desktop
+            .set_name(&name)
+            .map_err(|e| anyhow!("set_name: {e:?}"))?;
+        winvd::switch_desktop(desktop).map_err(|e| anyhow!("switch_desktop: {e:?}"))
+    };
+    if let Err(e) = setup() {
+        // Don't leave an empty, unnamed desktop behind on every failed run.
+        let _ = winvd::remove_desktop(desktop, previous);
+        return Err(e);
+    }
 
     // Windows open on whichever desktop is current when they are created. switch_desktop
-    // returns before the switch animation finishes, so in theory a fast-starting window could
-    // still land on the previous desktop. Zed and Firefox take long enough to create their
-    // windows that we launch immediately for now; if that turns out flaky, add a short
-    // configurable delay here.
-    spawn_detached(Command::new("zed").arg("-n").arg(&dir)).context("failed to launch zed")?;
-    spawn_detached(Command::new(FIREFOX).arg("-new-window")).context("failed to launch Firefox")?;
+    // returns before the switch animation finishes, so in theory a window could still land on
+    // the previous desktop. This is most likely when Zed or Firefox is already running: the
+    // launched process just hands the request to the existing instance, which can create the
+    // window almost immediately. It worked in testing, so we launch right away; if it turns out
+    // flaky, add a short configurable delay here.
+    let errors: Vec<_> = [
+        spawn_detached(Command::new("zed").arg("-n").arg(&dir)).context("failed to launch zed"),
+        spawn_detached(Command::new(FIREFOX).arg("-new-window"))
+            .context("failed to launch Firefox"),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .collect();
+    if !errors.is_empty() {
+        let messages: Vec<_> = errors.iter().map(|e| format!("{e:#}")).collect();
+        bail!("{}", messages.join("\n"));
+    }
 
     println!("{name}");
     Ok(())
