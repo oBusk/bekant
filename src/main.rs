@@ -2,6 +2,7 @@
 //! Firefox there, and place their windows in FancyZones zones.
 
 mod fancyzones;
+mod watch;
 mod window;
 
 use std::os::windows::process::CommandExt;
@@ -53,8 +54,11 @@ const FIREFOX: App = App {
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let (Some(arg), None) = (args.next(), args.next()) else {
-        bail!("usage: bekant <path>");
+        bail!("usage: bekant <path> | bekant watch");
     };
+    if arg == "watch" {
+        return watch::run();
+    }
 
     let dir = resolve_dir(Path::new(&arg))?;
     let name = dir

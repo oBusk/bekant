@@ -2,7 +2,10 @@
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
-use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
+use windows::Win32::Graphics::Dwm::{
+    DWM_CLOAKED_APP, DWM_CLOAKED_INHERITED, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+    DwmGetWindowAttribute,
+};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
     MonitorFromPoint, MonitorFromWindow,
@@ -11,8 +14,9 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetClassNameW, GetWindow, GetWindowRect, IsWindowVisible, IsZoomed,
-    SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
+    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowTextW, IsWindowVisible, IsZoomed, SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowPos, ShowWindow, WS_EX_TOOLWINDOW,
 };
 
 use crate::fancyzones::Zone;
@@ -39,11 +43,50 @@ pub fn top_level_windows() -> Vec<HWND> {
 /// Whether `hwnd` is a visible, unowned window of class `class`, i.e. a main app window rather
 /// than a popup, tooltip or hidden helper window.
 pub fn is_app_window(hwnd: HWND, class: &str) -> bool {
+    is_visible_unowned(hwnd) && class_name(hwnd) == class
+}
+
+/// Whether `hwnd` is a window the user would think of as an open app window, of any app.
+///
+/// Stricter than `is_app_window`, since it's used to pick windows to close: it must also have a
+/// title, not be a tool window, and not be cloaked by its app (suspended UWP apps leave invisible
+/// windows like that around). Windows on other virtual desktops are cloaked by the shell instead,
+/// and still count.
+pub fn is_main_window(hwnd: HWND) -> bool {
+    let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    let mut cloaked = 0u32;
+    let cloak_known = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut u32 as *mut _,
+            size_of::<u32>() as u32,
+        )
+    }
+    .is_ok();
+    is_visible_unowned(hwnd)
+        && ex_style & WS_EX_TOOLWINDOW.0 == 0
+        && cloak_known
+        && cloaked & (DWM_CLOAKED_APP | DWM_CLOAKED_INHERITED) == 0
+        && !title(hwnd).is_empty()
+}
+
+pub fn class_name(hwnd: HWND) -> String {
     let mut buf = [0u16; 256];
     let len = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
+    String::from_utf16_lossy(&buf[..len])
+}
+
+pub fn title(hwnd: HWND) -> String {
+    let mut buf = [0u16; 512];
+    let len = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
+    String::from_utf16_lossy(&buf[..len])
+}
+
+fn is_visible_unowned(hwnd: HWND) -> bool {
     let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
     let owned = unsafe { GetWindow(hwnd, GW_OWNER) }.is_ok();
-    visible && !owned && String::from_utf16_lossy(&buf[..len]) == class
+    visible && !owned
 }
 
 /// Whether the primary monitor is wider than it is tall. FancyZones picks a new desktop's default
