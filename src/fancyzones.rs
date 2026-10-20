@@ -10,7 +10,14 @@ use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::Zone;
+/// A rectangle in 1/10000ths of the monitor's work area, the same units FancyZones uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Zone {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "kebab-case")]
